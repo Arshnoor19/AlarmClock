@@ -466,5 +466,110 @@ def stopwatch():
         sys.exit(1)
 
 
+def format_timer_time(seconds):
+    total_s = max(0, int(round(seconds)))
+    m = total_s // 60
+    s = total_s % 60
+    return f"{m:02d}:{s:02d}"
+
+
+def _timer_loop(stdscr, total_seconds):
+    curses.curs_set(0)
+    stdscr.nodelay(True)
+
+    state = "idle"  # idle, running, paused
+    remaining_before = total_seconds
+    running_since = None
+
+    def current_remaining():
+        if state == "running" and running_since is not None:
+            return max(0.0, remaining_before - (time.time() - running_since))
+        return remaining_before
+
+    result = "quit"
+
+    while True:
+        try:
+            key = stdscr.getch()
+        except curses.error:
+            key = -1
+
+        if key in (curses.KEY_ENTER, 10, 13):
+            if state in ("idle", "paused"):
+                running_since = time.time()
+                state = "running"
+            elif state == "running":
+                remaining_before = current_remaining()
+                running_since = None
+                state = "paused"
+        elif key in (ord('r'), ord('R')):
+            if state != "running":
+                state = "idle"
+                remaining_before = total_seconds
+                running_since = None
+        elif key in (ord('q'), ord('Q')):
+            result = "quit"
+            break
+
+        remaining = current_remaining()
+
+        if state == "running" and remaining <= 0:
+            result = "finished"
+            break
+
+        stdscr.erase()
+        stdscr.addstr(0, 0, f"⏳  {format_timer_time(remaining)}  [{state}]")
+        stdscr.addstr(2, 0, f"Started: {format_timer_time(total_seconds)}")
+
+        max_y, max_x = stdscr.getmaxyx()
+        footer_row = max_y - 1
+        footer = "Controls: ENTER start/pause | R reset | Q quit"
+        try:
+            stdscr.addstr(footer_row, 0, footer[: max(0, max_x - 1)])
+        except curses.error:
+            pass
+
+        stdscr.refresh()
+        time.sleep(0.1)
+
+    return result
+
+
+@cli.command()
+@click.argument("minutes", type=int)
+def timer(minutes):
+    """Run a full-screen countdown timer."""
+    if minutes <= 0:
+        click.echo("Timer duration must be a positive number of minutes.", err=True)
+        sys.exit(1)
+
+    total_seconds = minutes * 60
+    current_minutes = minutes
+
+    while True:
+        try:
+            result = curses.wrapper(_timer_loop, total_seconds)
+        except Exception as e:
+            click.echo(f"Error running timer: {e}", err=True)
+            sys.exit(1)
+
+        if result != "finished":
+            break
+
+        fake_alarm = {
+            "time": "00:00",
+            "label": "Timer done",
+            "message": f"{current_minutes} minute timer finished",
+            "id": 0,
+        }
+        action = fire_alarm(fake_alarm)
+
+        if action != "snooze":
+            break
+
+        current_minutes = load_config().get("snooze_minutes", DEFAULT_SNOOZE_MINUTES)
+        total_seconds = current_minutes * 60
+
+
 if __name__ == "__main__":
     cli()
