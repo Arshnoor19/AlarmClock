@@ -381,5 +381,90 @@ def start():
         click.echo("\nAlarm watcher stopped.")
 
 
+def format_stopwatch_time(seconds):
+    total_cs = int(round(seconds * 100))
+    cs = total_cs % 100
+    total_s = total_cs // 100
+    s = total_s % 60
+    total_m = total_s // 60
+    m = total_m % 60
+    h = total_m // 60
+    return f"{h:02d}:{m:02d}:{s:02d}.{cs:02d}"
+
+
+def _stopwatch_loop(stdscr):
+    curses.curs_set(0)
+    stdscr.nodelay(True)
+
+    state = "idle"  # idle, running, stopped
+    elapsed_before = 0.0
+    running_since = None
+    splits = []  # cumulative elapsed time at each split
+
+    def current_elapsed():
+        if state == "running" and running_since is not None:
+            return elapsed_before + (time.time() - running_since)
+        return elapsed_before
+
+    while True:
+        try:
+            key = stdscr.getch()
+        except curses.error:
+            key = -1
+
+        if key in (curses.KEY_ENTER, 10, 13):
+            if state in ("idle", "stopped"):
+                running_since = time.time()
+                state = "running"
+            elif state == "running":
+                elapsed_before = current_elapsed()
+                running_since = None
+                state = "stopped"
+        elif key == ord(' '):
+            if state == "running":
+                splits.append(current_elapsed())
+        elif key in (ord('r'), ord('R')):
+            if state != "running":
+                state = "idle"
+                elapsed_before = 0.0
+                running_since = None
+                splits = []
+        elif key in (ord('q'), ord('Q')):
+            break
+
+        elapsed = current_elapsed()
+
+        stdscr.erase()
+        stdscr.addstr(0, 0, f"⏱  {format_stopwatch_time(elapsed)}  [{state}]")
+        stdscr.addstr(2, 0, "Splits:")
+
+        max_y, _ = stdscr.getmaxyx()
+        for i, split_total in enumerate(splits, start=1):
+            row = 2 + i
+            if row >= max_y - 2:
+                break
+            stdscr.addstr(row, 2, f"#{i}  {format_stopwatch_time(split_total)}")
+
+        footer_row = max_y - 1
+        footer = "Controls: ENTER start/stop | SPACE split | R reset | Q quit"
+        try:
+            stdscr.addstr(footer_row, 0, footer[: max(0, stdscr.getmaxyx()[1] - 1)])
+        except curses.error:
+            pass
+
+        stdscr.refresh()
+        time.sleep(0.1)
+
+
+@cli.command()
+def stopwatch():
+    """Run a full-screen stopwatch with splits."""
+    try:
+        curses.wrapper(_stopwatch_loop)
+    except Exception as e:
+        click.echo(f"Error running stopwatch: {e}", err=True)
+        sys.exit(1)
+
+
 if __name__ == "__main__":
     cli()
