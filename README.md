@@ -128,6 +128,4 @@ No database, no internet connection needed.
 
 ---
 
-## License
 
-MIT
